@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "api-db-test"
+version = "0.1.0"
+description = ""
+authors = ["Guilherme Lourenço <Guilherme.Lourenco@br.experian.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+flask = "^3.0.2"
+flask-sqlalchemy = "^3.1.1"
+pyodbc = "^5.1.0"
+duckdb = "^1.0.0"
+pandas = "^2.2.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

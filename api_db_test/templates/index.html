@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB-WASM File Upload and Query</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        table, th, td {
+            border: 1px solid black;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload a File and Query with DuckDB WASM</h1>
+    <form id="uploadForm">
+        <input type="file" id="fileInput">
+        <button type="submit">Upload and Query</button>
+    </form>
+    <div>
+        <textarea id="queryInput" rows="4" cols="50" placeholder="Enter your SQL query here"></textarea>
+        <button id="executeQueryButton">Execute Query</button>
+    </div>
+    <div id="queryResult"></div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.1-dev106.0/+esm';
+
+        const getDb = async () => {
+            const duckdbWasm = window.duckdb || duckdb;
+            if (window._db) return window._db;
+
+            const JSDELIVR_BUNDLES = duckdbWasm.getJsDelivrBundles();
+            const bundle = await duckdbWasm.selectBundle(JSDELIVR_BUNDLES);
+
+            const worker_url = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' }));
+            const worker = new Worker(worker_url);
+            const logger = new duckdbWasm.ConsoleLogger();
+            const db = new duckdbWasm.AsyncDuckDB(logger, worker);
+            await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+            URL.revokeObjectURL(worker_url);
+
+            window._db = db;
+            return db;
+        };
+
+        const convertBigIntToString = (obj) => {
+            if (typeof obj === 'bigint') {
+                return obj.toString();
+            } else if (Array.isArray(obj)) {
+                return obj.map(convertBigIntToString);
+            } else if (obj && typeof obj === 'object') {
+                return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, convertBigIntToString(v)]));
+            } else {
+                return obj;
+            }
+        };
+
+        const createTableFromQueryResult = (queryResult) => {
+            const arrayResult = queryResult.toArray();
+            if (arrayResult.length === 0) return null;
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            // Create table header
+            const headerRow = document.createElement('tr');
+            const columns = Object.keys(arrayResult[0]);
+            for (const column of columns) {
+                const th = document.createElement('th');
+                th.textContent = column;
+                headerRow.appendChild(th);
+            }
+            thead.appendChild(headerRow);
+
+            // Create table rows
+            for (const row of arrayResult) {
+                const tr = document.createElement('tr');
+                for (const column of columns) {
+                    const td = document.createElement('td');
+                    td.textContent = row[column];
+                    tr.appendChild(td);
+                }
+                tbody.appendChild(tr);
+            }
+
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            return table;
+        };
+
+        const executeQuery = async (query) => {
+            try {
+                const db = await getDb();
+                const conn = await db.connect();
+                const queryResult = await conn.query(query);
+
+                const convertedResult = convertBigIntToString(queryResult.toArray());
+                const table = createTableFromQueryResult(queryResult);
+                const queryResultDiv = document.getElementById('queryResult');
+                queryResultDiv.innerHTML = '';
+                if (table) {
+                    queryResultDiv.appendChild(table);
+                } else {
+                    queryResultDiv.innerText = 'No results';
+                }
+            } catch (error) {
+                document.getElementById('queryResult').innerText = `Error: ${error.message}`;
+            }
+        };
+
+        document.getElementById('uploadForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput.files.length === 0) {
+                alert('Please select a file');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            if (result.error) {
+                alert(result.error);
+                return;
+            }
+
+            const db = await getDb();
+            const conn = await db.connect();
+            const content = new TextEncoder().encode(result.content);
+            await db.registerFileBuffer(result.filename, content);
+
+            await conn.query(`DROP TABLE IF EXISTS uploaded; CREATE TABLE uploaded AS SELECT * FROM read_csv_auto('${result.filename}')`);
+            document.getElementById('queryResult').innerText = 'File uploaded and table created. You can now execute your queries, using table "uploaded".';
+        });
+
+        document.getElementById('executeQueryButton').addEventListener('click', () => {
+            const query = document.getElementById('queryInput').value;
+            if (!query) {
+                alert('Please enter a query');
+                return;
+            }
+            executeQuery(query);
+        });
+    </script>
+</body>
+</html>
